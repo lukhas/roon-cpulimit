@@ -1,0 +1,12 @@
+[package]
+name = "roon-cpulimit"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+tokio-i3ipc = "0.16.0"
+tokio-util = { version = "0.7", features = ["codec"] }
+tokio = { version = "1.0", features = ["io-util", "macros", "rt-multi-thread"] }
+tokio-stream = { version = "0.1" }
