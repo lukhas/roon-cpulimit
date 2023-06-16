@@ -7,41 +7,60 @@ use tokio_stream::StreamExt;
 
 use sysinfo::{Pid, ProcessExt, ProcessRefreshKind, RefreshKind, System, SystemExt};
 
-use std::process::Command;
+use std::process::{Child, Command};
 
-fn on_roon() {
-    // We found out we were focused on Roon, lift the CPU limitation
-    println!("Focused on Roon");
+// Embed my world in one ugly struct
+struct State {
+    subprocess: Option<Child>,
+    system: System,
 }
 
-fn not_on_roon(system: &mut System, started_subprocess: &mut bool) {
+fn on_roon(state: &mut State) {
+    // We found out we were focused on Roon, lift the CPU limitation
+    println!("Focused on Roon, killing cpulimit");
+    if let Some(p) = &mut state.subprocess {
+        println!("Terminating cpulimit subprocess");
+        let _ = p.kill();
+        let _ = p.wait();
+        state.subprocess = None;
+    };
+}
+
+fn not_on_roon(state: &mut State) {
     // refresh the list of processes
-    system.refresh_processes_specifics(ProcessRefreshKind::new());
+    state
+        .system
+        .refresh_processes_specifics(ProcessRefreshKind::new());
     let mut pid = Pid::from(0);
-    for process in system.processes_by_exact_name("Roon.exe") {
+    for process in state.system.processes_by_exact_name("Roon.exe") {
         pid = process.pid();
     }
 
     // Don't do anything if we did not find Roon UI
     if pid == Pid::from(0) {
+        println!("No Roon running, not bothering");
         return;
     }
-    if !(*started_subprocess) {
-        println!("Calling cpulimit on PID {:?}", pid);
-        let cpulimit_process = Command::new("cpulimit")
-            .arg("-p")
-            .arg(pid.to_string())
-            .arg("-l")
-            .arg("15")
-            .spawn()
-            .expect("cpulimit command failed to start");
-        *started_subprocess = true;
-    } else {
-        println!("cpulimit already running, doing nothing");
+    match &state.subprocess {
+        Some(_) => {
+            // println!("cpulimit already running, doing nothing");
+        }
+        _ => {
+            println!("Calling cpulimit on PID {:?}", pid);
+            state.subprocess = Some(
+                Command::new("cpulimit")
+                    .arg("-p")
+                    .arg(pid.to_string())
+                    .arg("-l")
+                    .arg("10")
+                    .spawn()
+                    .expect("cpulimit command failed to start"),
+            );
+        }
     }
 }
 
-fn on_window(event: Box<WindowData>, system: &mut System, started_subprocess: &mut bool) {
+fn on_window(event: Box<WindowData>, state: &mut State) {
     // println!("{:?}", event);
 
     if event.change == event::WindowChange::Focus {
@@ -53,20 +72,21 @@ fn on_window(event: Box<WindowData>, system: &mut System, started_subprocess: &m
 
         let class = window_prop.class.unwrap_or("".to_string());
         if class == "roon.exe" {
-            on_roon();
+            on_roon(state);
         } else {
-            not_on_roon(system, started_subprocess);
+            not_on_roon(state);
         }
     }
 }
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> io::Result<()> {
-    let mut started_subprocess = false;
-
-    let mut system = System::new_with_specifics(
-        RefreshKind::new().with_processes(ProcessRefreshKind::everything()),
-    );
+    let mut state = State {
+        subprocess: None,
+        system: System::new_with_specifics(
+            RefreshKind::new().with_processes(ProcessRefreshKind::everything()),
+        ),
+    };
 
     let mut i3 = I3::connect().await?;
     let resp = i3.subscribe([Subscribe::Window]).await?;
@@ -75,7 +95,7 @@ async fn main() -> io::Result<()> {
     let mut listener = i3.listen();
     while let Some(event) = listener.next().await {
         match event? {
-            Event::Window(ev) => on_window(ev, &mut system, &mut started_subprocess),
+            Event::Window(ev) => on_window(ev, &mut state),
             // ignore all other events
             _ => continue,
         }
