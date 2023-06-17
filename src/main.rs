@@ -41,9 +41,6 @@ fn not_on_roon(state: &mut State) {
     if let Some(process) = state.system.processes_by_exact_name("Roon.exe").next() {
         //println!("Found roon at PID {:?}", process);
         match &state.subprocess {
-            Some(_) => {
-                println!("cpulimit already running");
-            }
             None => {
                 println!("Calling cpulimit on PID {:?}", process.pid());
 
@@ -57,6 +54,7 @@ fn not_on_roon(state: &mut State) {
                         .expect("cpulimit command failed to start"),
                 );
             }
+            Some(_) => (),
         }
     } else {
         println!("Not found roon");
