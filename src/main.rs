@@ -5,8 +5,10 @@ use tokio_i3ipc::{
 };
 use tokio_stream::StreamExt;
 
-use sysinfo::{Pid, ProcessExt, ProcessRefreshKind, RefreshKind, System, SystemExt};
+use sysinfo::{ProcessExt, ProcessRefreshKind, RefreshKind, System, SystemExt};
 
+use nix::sys::signal::{self, Signal};
+use nix::unistd::Pid;
 use std::process::{Child, Command};
 
 // Embed my world in one ugly struct
@@ -17,13 +19,16 @@ struct State {
 
 fn on_roon(state: &mut State) {
     // We found out we were focused on Roon, lift the CPU limitation
-    println!("Focused on Roon, killing cpulimit");
+    println!("Focused on Roon");
     if let Some(p) = &mut state.subprocess {
         println!("Terminating cpulimit subprocess");
-        let _ = p.kill();
+        signal::kill(Pid::from_raw(p.id() as i32), Signal::SIGTERM).unwrap();
         let _ = p.wait();
+        println!("Did kill and wait");
         state.subprocess = None;
-    };
+    } else {
+        println!("No cpulimit subprocess to kill, which is unexpected...");
+    }
 }
 
 fn not_on_roon(state: &mut State) {
@@ -31,51 +36,44 @@ fn not_on_roon(state: &mut State) {
     state
         .system
         .refresh_processes_specifics(ProcessRefreshKind::new());
-    let mut pid = Pid::from(0);
-    for process in state.system.processes_by_exact_name("Roon.exe") {
-        pid = process.pid();
-    }
 
-    // Don't do anything if we did not find Roon UI
-    if pid == Pid::from(0) {
-        println!("No Roon running, not bothering");
-        return;
-    }
-    match &state.subprocess {
-        Some(_) => {
-            // println!("cpulimit already running, doing nothing");
+    // Assume at most only one process matches "Roon.exe"
+    if let Some(process) = state.system.processes_by_exact_name("Roon.exe").next() {
+        //println!("Found roon at PID {:?}", process);
+        match &state.subprocess {
+            Some(_) => {
+                println!("cpulimit already running");
+            }
+            None => {
+                println!("Calling cpulimit on PID {:?}", process.pid());
+
+                state.subprocess = Some(
+                    Command::new("cpulimit")
+                        .arg("-p")
+                        .arg(process.pid().to_string())
+                        .arg("-l")
+                        .arg("10")
+                        .spawn()
+                        .expect("cpulimit command failed to start"),
+                );
+            }
         }
-        _ => {
-            println!("Calling cpulimit on PID {:?}", pid);
-            state.subprocess = Some(
-                Command::new("cpulimit")
-                    .arg("-p")
-                    .arg(pid.to_string())
-                    .arg("-l")
-                    .arg("10")
-                    .spawn()
-                    .expect("cpulimit command failed to start"),
-            );
-        }
+    } else {
+        println!("Not found roon");
     }
 }
 
 fn on_window(event: Box<WindowData>, state: &mut State) {
-    // println!("{:?}", event);
+    if event.change != event::WindowChange::Focus {
+        return;
+    }
+    let Some(window_prop) = event.container.window_properties else { return };
+    //println!("{:?}", window_prop);
 
-    if event.change == event::WindowChange::Focus {
-        let window_prop = match event.container.window_properties {
-            Some(w) => w,
-            _ => return,
-        };
-        //println!("{:?}", window_prop);
-
-        let class = window_prop.class.unwrap_or("".to_string());
-        if class == "roon.exe" {
-            on_roon(state);
-        } else {
-            not_on_roon(state);
-        }
+    if window_prop.class.unwrap_or("".to_string()) == "roon.exe" {
+        on_roon(state);
+    } else {
+        not_on_roon(state);
     }
 }
 
@@ -89,8 +87,7 @@ async fn main() -> io::Result<()> {
     };
 
     let mut i3 = I3::connect().await?;
-    let resp = i3.subscribe([Subscribe::Window]).await?;
-    println!("{:#?}", resp);
+    i3.subscribe([Subscribe::Window]).await?;
 
     let mut listener = i3.listen();
     while let Some(event) = listener.next().await {
