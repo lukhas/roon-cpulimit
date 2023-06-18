@@ -68,7 +68,7 @@ fn on_window(event: Box<WindowData>, state: &mut State) {
     let Some(window_prop) = event.container.window_properties else { return };
     //println!("{:?}", window_prop);
 
-    if window_prop.class.unwrap_or("".to_string()) == "roon.exe" {
+    if window_prop.class == Some("roon.exe".to_string()) {
         on_roon(state);
     } else {
         not_on_roon(state);
