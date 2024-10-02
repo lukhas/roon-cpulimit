@@ -65,10 +65,14 @@ fn on_window(event: Box<WindowData>, state: &mut State) {
     if event.change != event::WindowChange::Focus {
         return;
     }
-    let Some(window_prop) = event.container.window_properties else { return };
+    let Some(window_prop) = event.container.window_properties else {
+        return;
+    };
     //println!("{:?}", window_prop);
 
-    if window_prop.class.is_some_and(|x| x == "roon.exe") {
+    if window_prop.class.is_some_and(|x| x == "steam_proton")
+        && window_prop.title.is_some_and(|t| t == "Roon")
+    {
         on_roon(state);
     } else {
         not_on_roon(state);
